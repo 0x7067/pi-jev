@@ -78,6 +78,9 @@ compaction. Never prints the key.
 6. **Digest.** The kept blocks are joined with `---[jev:<n>:<role>]---` lines
    and returned as pi's `summary`, so pi stores it in the `CompactionEntry` and
    injects it as the compacted history.
+7. **Pointer index.** A bounded `<read-files>` list of the locations behind
+   dropped and truncated tool calls, paid for out of the same 16,000 chars.
+   Paths, not results: a path is short and never goes stale.
 
 Requests are chunked at 10 blocks each with up to 16 in flight, so a compaction
 costs about one round trip regardless of session length.
@@ -112,11 +115,19 @@ The replay approximates pi's cut point by walking token estimates back to
 `node scripts/coverage.ts` runs the stronger test: re-fetch coverage against
 **real** compaction boundaries already in your session store, with pi's own
 stored summaries as the baseline. Over 69 boundaries and 6,609 re-fetch events,
-the digest reaches 66% verbatim coverage against pi's 90% — and 91% with a
-60-line pointer index of dropped file locations, which pi's summary gets for
-free from its `<read-files>` section. That index is implemented in the eval
-behind `--pointer-lines` but not yet shipped in the extension;
-`docs/compaction-port.md` has the sweep and the open decision.
+the digest reaches 83% verbatim coverage against a 70% floor, and 91% against
+pi's 90% on identical footing.
+
+Getting there needed a `<read-files>` index of the locations behind dropped and
+truncated tool calls — the same mechanism pi's own summary uses, and the one
+claude-jev's design doc ranks as paying soonest. Without it the digest reaches
+66% and loses to pi's 90%. The index is paid for out of `TARGET_CHARS` rather
+than added on top, so the digest median is 16,456 chars — smaller than the
+16,972 it was without the index, and inside the cap.
+
+Locations are found by the shape of a tool call's arguments, never by its name,
+so a third-party tool is covered the moment it passes a path.
+`docs/compaction-port.md` has the sweep and the methodology.
 
 ## Layout
 

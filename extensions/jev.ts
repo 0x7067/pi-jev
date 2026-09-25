@@ -1,6 +1,12 @@
 import type { ExtensionAPI, FileOperations } from "@earendil-works/pi-coding-agent";
-import { renderDigest } from "../src/pi/digest.ts";
-import { DIRECTIVE_CHARS, selectBlocks, type AskFn, type Selection } from "../src/compaction/select.ts";
+import { pointerIndex, POINTER_CHARS, renderDigest } from "../src/pi/digest.ts";
+import {
+	DIRECTIVE_CHARS,
+	selectBlocks,
+	TARGET_CHARS,
+	type AskFn,
+	type Selection,
+} from "../src/compaction/select.ts";
 import { ask, resolve, status } from "../src/jev/client.ts";
 import { appendRecord, lastRecord } from "../src/jev/log.ts";
 import { blocksFrom } from "../src/pi/blocks.ts";
@@ -45,12 +51,14 @@ export default function (pi: ExtensionAPI) {
 		const askFn: AskFn = (state, questions, timeoutMs) =>
 			ask(state, questions, { ...FILES, timeoutMs, signal, caller: "compaction" });
 
+		const cwd = ctx.sessionManager.getCwd();
 		let selection: Selection;
 		try {
 			selection = await selectBlocks(blocks, {
 				ask: askFn,
-				cwd: ctx.sessionManager.getCwd(),
+				cwd,
 				directive: directiveOf(customInstructions),
+				targetChars: TARGET_CHARS - POINTER_CHARS,
 			});
 		} catch (error) {
 			ctx.ui.notify(`jev-compact: ${describeError(error)}; pi's own summary runs`, "warning");
@@ -58,13 +66,15 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const { rows, ...counters } = selection.stats;
-		const summary = renderDigest(blocks, selection.kept);
+		const pointers = pointerIndex(blocks, selection.kept, cwd);
+		const summary = renderDigest(blocks, selection.kept, pointers);
 		appendRecord(COMPACT_LOG_PATH, {
 			ts: new Date().toISOString(),
 			session_id: ctx.sessionManager.getSessionId(),
 			source: "session_before_compact",
 			trigger: reason,
 			blocks_in: blocks.length,
+			pointer_chars: pointers.length,
 			...counters,
 			rows,
 		});

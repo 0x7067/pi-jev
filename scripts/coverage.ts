@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { buildSessionContext, parseSessionEntries } from "@earendil-works/pi-coding-agent";
 import type { SessionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { renderDigest } from "../src/pi/digest.ts";
+import { MAX_POINTER_LINES, pointerIndex, POINTER_CHARS, renderDigest } from "../src/pi/digest.ts";
 import { blocksFrom } from "../src/pi/blocks.ts";
 import { locations, locationTerms, type LocationKind } from "../src/pi/refs.ts";
 import { selectBlocks, TARGET_CHARS, type AskFn } from "../src/compaction/select.ts";
@@ -27,7 +27,7 @@ interface Options {
 }
 
 function parseOptions(argv: readonly string[]): Options {
-	const options: Options = { limit: 0, pointerLines: 0, paths: [] };
+	const options: Options = { limit: 0, pointerLines: MAX_POINTER_LINES, paths: [] };
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--limit") options.limit = Number(argv[++i]);
@@ -36,36 +36,6 @@ function parseOptions(argv: readonly string[]): Options {
 		else if (arg !== undefined && !arg.startsWith("--")) options.paths.push(arg);
 	}
 	return options;
-}
-
-/** The experiment from claude-jev's compaction-design.md item 2: a bounded index
- * of where each dropped or truncated call got its bytes, appended to the digest.
- * Paths, not results, so it stays cheap and never goes stale. Truncated blocks
- * count as missing, because a 400-char head of an `edit` call cuts the `path`
- * field away. The paths come from `Block.refs`, lifted from the full arguments
- * before truncation. */
-function pointerIndex(
-	blocks: readonly { refs?: string[] }[],
-	kept: readonly { i: number; kind: string }[],
-	cwd: string,
-	maxLines: number,
-): string {
-	if (maxLines <= 0) return "";
-	const state = new Map(kept.map((k) => [k.i, k.kind]));
-	const paths: string[] = [];
-	const seen = new Set<string>();
-	blocks.forEach((block, i) => {
-		const kind = state.get(i);
-		if (kind !== undefined && kind !== "truncated") return;
-		for (const ref of block.refs ?? []) {
-			const path = absolute(ref, cwd);
-			if (seen.has(path)) continue;
-			seen.add(path);
-			paths.push(path);
-		}
-	});
-	if (paths.length === 0) return "";
-	return `\n<read-files>\n${paths.slice(0, maxLines).join("\n")}\n</read-files>`;
 }
 
 function absolute(path: string, cwd: string): string {
@@ -209,13 +179,18 @@ async function evaluate(
 
 		let selection: Awaited<ReturnType<typeof selectBlocks>>;
 		try {
-			selection = await selectBlocks(blocks, { ask: askFn, cwd, pinTail: options.pinTail });
+			selection = await selectBlocks(blocks, {
+				ask: askFn,
+				cwd,
+				pinTail: options.pinTail,
+				targetChars: options.pointerLines > 0 ? TARGET_CHARS - POINTER_CHARS : TARGET_CHARS,
+			});
 		} catch {
 			continue;
 		}
 
 		const pointers = pointerIndex(blocks, selection.kept, cwd, options.pointerLines);
-		const digest = renderDigest(blocks, selection.kept) + pointers;
+		const digest = renderDigest(blocks, selection.kept, pointers);
 		const digestFull =
 			selection.kept
 				.filter((k) => !k.text.includes(ELISION_MARK))

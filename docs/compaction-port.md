@@ -209,13 +209,23 @@ Over every session in `~/.pi/agent/sessions` that contains a compaction entry �
 | 15 | 611 | 90% | 88% | 77% | PASS |
 | 30 | 1,339 | 90% | 91% | 82% | PASS |
 | 60 | 2,628 | 90% | 95% | 91% | PASS |
+| **40, shipped** | **1,910** | **90%** | **91%** | **83%** | **PASS** |
 
-Fifteen pointer lines clear the floor for about 150 tokens. Sixty beat pi's own
-default — 91% against 90% — for about 650, which is the first configuration
-where the digest wins the comparison outright rather than trading size for
-coverage.
+The first four rows spend the index on top of a 16,000-char block budget, so the
+digest grows to 19,178 chars at 60 lines. The shipped row reserves
+`POINTER_CHARS = 2000` out of `TARGET_CHARS` instead, which is why its coverage
+sits between the 30- and 60-line rows while its digest median is 16,456 chars —
+*smaller* than the 16,972 of the no-index row, and inside the cap. Buying the
+index out of the budget rather than adding it costs about 8 points of coverage
+against the unbudgeted 60-line run and keeps the digest bounded, which is the
+trade worth making: an unbounded summary is the failure mode compaction exists
+to prevent.
 
-Without pointers the digest spends 17.0k chars to reach 66% while pi's summary
+Shipped: 83% verbatim against a 70% floor, 91% for the digest against pi's 90%
+on identical footing, 85% against 76% when the shared retained tail is stripped
+so only the differing part is compared.
+
+Without the index the digest spends 17.0k chars to reach 66% while pi's summary
 spends 10.8k to reach 90%. pi wins because its summary ends with deterministic
 `<read-files>` and `<modified-files>` indexes — the same mechanism claude-jev's
 `compaction-design.md` proposes as its item 2 and ranks as paying soonest. The
@@ -258,29 +268,40 @@ the index is cheap next to a missing one.
 `Block.refs` carries the locations into the engine, lifted from the full
 arguments before they are truncated to 400 chars — a head of `[tool_use edit]
 {"edits":[…]}` loses the `path` field, so it cannot be recovered afterwards.
-Nothing in the shipped extension reads `refs` yet; the pointer index is still
-eval-only pending the decision below.
 
-### Open
+### Shipped
 
-Pointer lines are implemented in `scripts/coverage.ts` behind `--pointer-lines`,
-not in `extensions/jev.ts`. Shipping them means appending the index to the
-digest and deciding whether it counts against `TARGET_CHARS` — at 60 lines the
-digest median is 19,178 chars, about 20% over a cap that currently covers block
-text only.
+`pointerIndex` lives in `src/pi/digest.ts` and is the one implementation: the
+extension calls it, and so does `scripts/coverage.ts`, so the number the eval
+reports is the digest production writes. `MAX_POINTER_LINES = 40`,
+`POINTER_CHARS = 2000`, and `selectBlocks` is handed
+`TARGET_CHARS - POINTER_CHARS` so the index is paid for out of the block budget
+rather than added on top of it.
+
+The index is stripped by `splitSummary` before a digest is re-blocked. It is
+derived from the selection that produced it and the next compaction rebuilds its
+own, so re-judging it would spend questions on paths and keep them twice.
+
+`scripts/coverage.ts --pointer-lines N` sweeps the budget; `0` turns the index
+off and lifts the reservation, which is how the table above was produced.
 
 ## Deliberately not implemented
 
 claude-jev's `docs/compaction-design.md` ranks four items it has designed but
 not shipped: a `kind` / `recoverable` / `tool_value` question set, merged tool
 units with local classification and pointer lines, `fit_kept` ordered by kind,
-and a stratified question budget above `MAX_BLOCKS`. None is in v0.22.0, so none
-is here. Porting an unshipped proposal would have made the two implementations
-diverge before either was measured.
+and a stratified question budget above `MAX_BLOCKS`. None is in v0.22.0.
 
-The one that would pay soonest on pi transcripts is item 2. The replayed
-digests are dominated by `[tool_use]` / `[tool_result]` pairs, and pointer lines
-for read-class tools would cut the unit count roughly in half.
+Item 2 is now partly here, and only because the coverage eval forced it: the
+pointer lines ship, the merged tool units and local classification do not. The
+remaining three are still unshipped, and the reason is unchanged — porting an
+unmeasured proposal makes the two implementations diverge before either has a
+number behind it.
+
+Merging `[tool_use]` / `[tool_result]` pairs into one judged unit remains the
+cheapest next step. The replayed digests are dominated by those pairs, and the
+pairing already links them by `toolCallId`, so the unit boundary is known
+without any new parsing.
 
 ## Measured on real pi transcripts
 
