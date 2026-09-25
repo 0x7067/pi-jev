@@ -1,0 +1,29 @@
+docs/compaction-port.md
+  s_68ce895461894e::t_7ff04be094e2ee 189-271
+src/pi/blocks.ts
+  s_74bd654a01f4a3::t_27b71f5a795b07 3,12-21,48,53,57-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "57ae68df55e477b83a69e21d65f237a99acea1b5",
+  "prompts": {},
+  "sessions": {
+    "s_68ce895461894e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0d9b1-c7ba-7215-a5b8-40cbf2a5c86e",
+        "model": "qwen3.8-max"
+      },
+      "human_author": "Pedro Guimarães <21346846+0x7067@users.noreply.github.com>"
+    },
+    "s_74bd654a01f4a3": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0d962-8505-756b-ac8e-1509951c65b2",
+        "model": "qwen3.8-flash"
+      },
+      "human_author": "Pedro Guimarães <21346846+0x7067@users.noreply.github.com>"
+    }
+  }
+}
