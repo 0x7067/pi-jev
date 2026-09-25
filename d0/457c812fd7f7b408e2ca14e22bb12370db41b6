@@ -1,0 +1,25 @@
+package-lock.json
+  s_d9393bfb2a1e8c::t_2e80b26131388a 1-3256
+package.json
+  s_d9393bfb2a1e8c::t_c8f0be1bd8a9d1 1-47
+test/select.test.ts
+  s_d9393bfb2a1e8c::t_ec89f9cfa156ee 1-317
+tsconfig.json
+  s_d9393bfb2a1e8c::t_32bfa8ac34c69b 1-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d0457c812fd7f7b408e2ca14e22bb12370db41b6",
+  "prompts": {},
+  "sessions": {
+    "s_d9393bfb2a1e8c": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0d91c-a973-77d0-9a5a-dc48853f5883",
+        "model": "qwen3.8-flash"
+      },
+      "human_author": "Pedro Guimarães <21346846+0x7067@users.noreply.github.com>"
+    }
+  }
+}
