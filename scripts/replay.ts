@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { buildSessionContext, estimateTokens, parseSessionEntries } from "@earendil-works/pi-coding-agent";
 import type { SessionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { renderDigest, splitSummary } from "../src/pi/digest.ts";
-import { selectBlocks, TARGET_CHARS, type AskFn } from "../src/compaction/select.ts";
+import { PIN_TAIL, selectBlocks, TARGET_CHARS, type AskFn } from "../src/compaction/select.ts";
 import { ask as liveAsk, resolve, type Answers } from "../src/jev/client.ts";
 import { callLogPath, dotEnvPath, sessionsDir } from "../src/pi/paths.ts";
 import { blocksFrom } from "../src/pi/blocks.ts";
@@ -14,16 +14,18 @@ interface Options {
 	limit: number;
 	keepRecentTokens: number;
 	show: number;
+	pinTail: number;
 	paths: string[];
 }
 
 function parseOptions(argv: readonly string[]): Options {
-	const options: Options = { limit: 5, keepRecentTokens: 20_000, show: 0, paths: [] };
+	const options: Options = { limit: 5, keepRecentTokens: 20_000, show: 0, pinTail: PIN_TAIL, paths: [] };
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--limit") options.limit = Number(argv[++i]);
 		else if (arg === "--keep-recent") options.keepRecentTokens = Number(argv[++i]);
 		else if (arg === "--show") options.show = Number(argv[++i]);
+		else if (arg === "--pin-tail") options.pinTail = Number(argv[++i]);
 		else if (arg !== undefined && !arg.startsWith("--")) options.paths.push(arg);
 	}
 	return options;
@@ -60,6 +62,8 @@ function hash(text: string): number {
 	return (h >>> 0) / 4294967295;
 }
 
+const SEAM = 4;
+
 const stubAsk: AskFn = async (_state, questions) => {
 	const answers: Answers = {};
 	for (const [key, question] of Object.entries(questions)) {
@@ -67,6 +71,14 @@ const stubAsk: AskFn = async (_state, questions) => {
 	}
 	return answers;
 };
+
+interface SeamBlock {
+	verdict: string;
+	role: string;
+	kind: string;
+	chars: number;
+	ref: string;
+}
 
 interface Row {
 	session: string;
@@ -89,6 +101,7 @@ interface Row {
 	droppedByCap: number;
 	pinnedChars: number;
 	pinShare: number;
+	seam: SeamBlock[];
 	linked: number;
 	adjacencyMissed: number;
 	orphans: number;
@@ -114,7 +127,11 @@ async function replay(path: string, options: Options, askFn: AskFn): Promise<Row
 	const blocks = blocksFrom(messages.slice(0, cut));
 	if (blocks.length === 0) return undefined;
 
-	const selection = await selectBlocks(blocks, { ask: askFn, cwd: header?.cwd });
+	const selection = await selectBlocks(blocks, {
+		ask: askFn,
+		cwd: header?.cwd,
+		pinTail: options.pinTail,
+	});
 	const digest = renderDigest(blocks, selection.kept);
 	const stats = selection.stats;
 	const split = splitSummary(digest);
@@ -137,6 +154,14 @@ async function replay(path: string, options: Options, askFn: AskFn): Promise<Row
 		if (keptSet.has(i) && !keptSet.has(block.needs)) orphans++;
 	});
 
+	const allRows = stats.rows ?? [];
+	const seam: SeamBlock[] = allRows.slice(Math.max(0, allRows.length - SEAM)).map((row) => ({
+		verdict: row.verdict,
+		role: row.role,
+		kind: row.kind,
+		chars: row.chars,
+		ref: row.ref,
+	}));
 	const pinnedChars = stats.pinnedChars ?? 0;
 	const charsAfter = stats.charsAfter ?? 0;
 	return {
@@ -162,6 +187,7 @@ async function replay(path: string, options: Options, askFn: AskFn): Promise<Row
 		droppedByCap: (stats.keptBeforeFit ?? 0) - (stats.kept ?? 0),
 		pinnedChars,
 		pinShare: charsAfter === 0 ? 0 : pinnedChars / charsAfter,
+		seam,
 		linked,
 		adjacencyMissed,
 		orphans,
@@ -227,12 +253,12 @@ function quantile(values: readonly number[], q: number): number {
 	return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
 }
 
-function budget(rows: readonly Row[]): void {
+function budget(rows: readonly Row[], pinTail: number): void {
 	const pct = (x: number) => `${Math.round(x * 100)}%`;
 	const shares = rows.map((row) => row.pinShare);
 	const pinned = rows.map((row) => row.pinnedChars);
 	const digests = rows.map((row) => row.digestChars);
-	console.log(`\nbudget — TARGET_CHARS ${TARGET_CHARS}, PIN_TAIL 4:`);
+	console.log(`\nbudget — TARGET_CHARS ${TARGET_CHARS}, PIN_TAIL ${pinTail}:`);
 	console.log(`  cap bound on ${rows.filter((row) => row.capBound).length}/${rows.length} sessions`);
 	console.log(`  blocks the cap downgraded to heads: ${rows.reduce((n, row) => n + row.escalated, 0)}`);
 	console.log(`  blocks the cap dropped: ${rows.reduce((n, row) => n + row.droppedByCap, 0)}`);
@@ -257,6 +283,33 @@ function budget(rows: readonly Row[]): void {
 	}
 }
 
+function seamReport(rows: readonly Row[], pinTail: number): void {
+	const seam = rows.flatMap((row) => row.seam);
+	if (seam.length === 0) return;
+	const pct = (n: number) => `${Math.round((n / seam.length) * 100)}%`;
+	console.log(
+		`\nseam — the ${SEAM} newest blocks of the summarized span, PIN_TAIL ${pinTail}, n=${seam.length}:`,
+	);
+	for (const verdict of ["pinned", "full", "truncated", "dropped"]) {
+		const n = seam.filter((block) => block.verdict === verdict).length;
+		if (n > 0) console.log(`  ${verdict}: ${n} (${pct(n)})`);
+	}
+	const lost = seam.filter((block) => block.verdict === "dropped" || block.verdict === "truncated");
+	if (lost.length === 0) {
+		console.log("  nothing at the seam was cut — the pin protected nothing on this sample");
+		return;
+	}
+	const shapes = new Map<string, number>();
+	for (const block of lost) {
+		const key = `${block.verdict} ${block.role}/${block.kind}`;
+		shapes.set(key, (shapes.get(key) ?? 0) + 1);
+	}
+	console.log("  what was cut:");
+	for (const [shape, n] of [...shapes].sort((a, b) => b[1] - a[1])) console.log(`    ${n}x ${shape}`);
+	console.log("  samples:");
+	for (const block of lost.slice(0, 6)) console.log(`    [${block.verdict}] ${block.ref.slice(0, 110)}`);
+}
+
 async function main(): Promise<number> {
 	const options = parseOptions(process.argv.slice(2));
 	const paths = options.paths.length > 0 ? options.paths : sessionFiles().slice(0, options.limit);
@@ -268,6 +321,7 @@ async function main(): Promise<number> {
 		: stubAsk;
 	console.log(
 		`pi-jev replay · ${paths.length} session(s) · keepRecentTokens ${options.keepRecentTokens} · ` +
+			`PIN_TAIL ${options.pinTail} · ` +
 			`judgments ${live ? `live via ${resolved.provider?.name}` : "STUBBED (no API key resolved)"}`,
 	);
 
@@ -308,7 +362,8 @@ async function main(): Promise<number> {
 			`${totals.linked} linked tool results, ${totals.adjacencyMissed} of them missed by text adjacency, ` +
 			`${totals.orphans} left without their call`,
 	);
-	budget(rows);
+	budget(rows, options.pinTail);
+	seamReport(rows, options.pinTail);
 
 	if (options.show > 0) {
 		const last = rows[rows.length - 1];

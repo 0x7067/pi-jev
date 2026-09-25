@@ -252,6 +252,55 @@ of the difference is structural: in pi the pinned blocks are the newest four of
 the *summarized* span, adjacent to a tail pi already keeps, rather than the live
 tail of the whole conversation.
 
+### The `PIN_TAIL = 0` experiment
+
+`node scripts/replay.ts --pin-tail 0` against the same 20 session files, live
+Jev, paired with a `--pin-tail 4` baseline. The question: pi already keeps
+`keepRecentTokens` verbatim, so is the pin redundant?
+
+Fate of the four newest blocks of the summarized span — the seam between the
+digest and pi's own retained tail — when they are judged instead of pinned
+(n=80):
+
+| verdict | |
+| --- | --- |
+| kept whole | 10 (13%) |
+| truncated to a head | 22 (28%) |
+| dropped | 48 (60%) |
+
+What got cut: 28 tool results, 16 assistant texts, 11 `fabric_exec` calls, 5
+tool results truncated, 3 `bash` calls, 3 assistant texts, one each of `edit`,
+`write`, `read` — and **one user message, truncated**.
+
+| | `PIN_TAIL 4` | `PIN_TAIL 0` |
+| --- | --- | --- |
+| digest median, all sessions | 9,757 | 8,407 |
+| digest median, cap-bound sessions | 17,002 | 17,133 |
+| blocks the cap dropped | 188 | 176 |
+| blocks kept | 397 | 372 |
+
+The decisive row is the second. **On sessions where the cap binds, the pin costs
+nothing**: the digest is ~17.0k chars either way, because `fitKept` drops blocks
+to hit `TARGET_CHARS` regardless. The pin does not enlarge the digest there, it
+only reserves a slot in it — guaranteeing the seam is among the blocks that
+survive. It is free exactly where budget is scarce, and costs ~1,350 chars
+median (~340 tokens, roughly 3.5% of a 40k context) only on sessions that had
+10k chars of slack anyway.
+
+Dropping 60% of the seam for 340 tokens on slack sessions is a bad trade, so
+`PIN_TAIL = 4` stays.
+
+The nuance worth keeping: most of what gets dropped is defensible in isolation.
+`Successfully wrote to <path>`, `Successfully replaced 2 block(s) in <path>`, a
+search command a rerun would reproduce — the `rerunnable` check is right to
+demote those. Jev is not making a mistake. The seam simply has a structural role
+the five checks never ask about: it is the lead-in to the messages pi keeps
+verbatim, and dropping it leaves the retained tail referring to edits and
+commands that are no longer in context. That is a deterministic guarantee, not a
+semantic judgment, which is why it is a pin and not a question — the same
+distinction `PRODUCT_VISION.md` draws in principle 9: semantic judgment does not
+replace deterministic policy.
+
 The replay approximates pi's cut point by walking `estimateTokens` back to
 `keepRecentTokens`; production gets the real boundary from
 `prepareCompaction`. It measures size, latency, pairing, and budget pressure,

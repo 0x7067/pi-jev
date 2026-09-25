@@ -110,7 +110,8 @@ The replay approximates pi's cut point by walking token estimates back to
 `keepRecentTokens`; production uses pi's own `prepareCompaction`. It does not
 measure re-fetch coverage — claude-jev's `eval/` does, against Claude Code
 transcripts, and reports 76–82% verbatim coverage there.
-`docs/compaction-port.md` has the full budget analysis.
+`docs/compaction-port.md` has the full budget analysis and the `PIN_TAIL = 0`
+experiment.
 
 ## Layout
 
@@ -144,6 +145,7 @@ npm install
 npm run check          # tsc --noEmit && node --test
 npm run replay         # newest 5 real sessions
 npm run replay -- --limit 20 --show 40
+npm run replay -- --pin-tail 0 <session.jsonl>...   # compare against the default of 4
 ```
 
 Tests are deterministic and need no key. The replay uses live Jev when a key

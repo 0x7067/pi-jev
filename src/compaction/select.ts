@@ -306,6 +306,7 @@ export interface SelectOptions {
 	cwd?: string;
 	directive?: string;
 	targetChars?: number;
+	pinTail?: number;
 }
 
 export interface Selection {
@@ -316,9 +317,10 @@ export interface Selection {
 export async function selectBlocks(blocks: readonly Block[], options: SelectOptions): Promise<Selection> {
 	if (blocks.length === 0) return { kept: [], stats: { judged: 0 } };
 	const { ask, cwd, directive } = options;
+	const pinTail = options.pinTail ?? PIN_TAIL;
 	const windowStart = Math.max(0, blocks.length - MAX_BLOCKS);
 	const rescueLo = Math.max(0, windowStart - RESCUE_BLOCKS);
-	const judged = Math.max(0, blocks.length - PIN_TAIL);
+	const judged = Math.max(0, blocks.length - pinTail);
 
 	const started = performance.now();
 	const answers: Answers =
