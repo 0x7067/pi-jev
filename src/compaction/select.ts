@@ -288,9 +288,12 @@ export interface Stats {
 	rescued?: number;
 	pinned?: number;
 	kept?: number;
+	keptBeforeFit?: number;
 	truncated?: number;
 	escalated?: number;
+	pinnedChars?: number;
 	charsBefore?: number;
+	charsBeforeFit?: number;
 	charsAfter?: number;
 	estTokensAfter?: number;
 	reduction?: number;
@@ -382,7 +385,9 @@ export async function selectBlocks(blocks: readonly Block[], options: SelectOpti
 		paired.push(k);
 	}
 
-	const final = fitKept([...rescued, ...paired], blocks, options.targetChars);
+	const preFit = [...rescued, ...paired];
+	const charsBeforeFit = preFit.reduce((sum, k) => sum + k.text.length, 0);
+	const final = fitKept(preFit, blocks, options.targetChars);
 	const charsBefore = blocks.reduce((sum, block) => sum + block.text.length, 0);
 	const charsAfter = final.reduce((sum, k) => sum + k.text.length, 0);
 	return {
@@ -392,9 +397,12 @@ export async function selectBlocks(blocks: readonly Block[], options: SelectOpti
 			rescued: rescued.length,
 			pinned: blocks.length - judged,
 			kept: final.length,
+			keptBeforeFit: preFit.length,
 			truncated: final.filter((k) => k.kind === "truncated").length,
 			escalated: final.filter((k) => k.escalated).length,
+			pinnedChars: final.filter((k) => k.pinned).reduce((sum, k) => sum + k.text.length, 0),
 			charsBefore,
+			charsBeforeFit,
 			charsAfter,
 			estTokensAfter: Math.floor(charsAfter / 4),
 			reduction: Math.round((1 - charsAfter / Math.max(charsBefore, 1)) * 1000) / 1000,

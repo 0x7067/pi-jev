@@ -40,11 +40,11 @@ again for the next pass.
 | `fit_kept` | `fitKept` | |
 | `block_kind` / `block_rows` | `blockKind` / `blockRows` | |
 | `select_blocks` | `selectBlocks` | takes `ask` as a parameter so tests need no network |
-| `rows_out` | `src/compaction/digest.ts` `renderDigest` | rows → one string |
+| `rows_out` | `src/pi/digest.ts` `renderDigest` | rows → one string |
 | — | `splitSummary` | new, required by pi's `previousSummary` |
-| `log_stats` | `src/jev/log.ts` `appendRecord` | same file name and record shape |
+| `log_stats` | `src/jev/log.ts` `appendRecord` | same record shape; the path is an argument |
 | `jev.py` `ask` / `resolve` / `provider_for` / `status` | `src/jev/client.ts` | |
-| `jev.py` `config_dir` | `src/jev/env.ts` `configDir` | `$CLAUDE_CONFIG_DIR` → `$PI_CODING_AGENT_DIR` |
+| `jev.py` `config_dir` | `src/pi/paths.ts` `configDir` | `$CLAUDE_CONFIG_DIR` → `$PI_CODING_AGENT_DIR`, and now pi-side |
 | `register.ts` `session.compact` handler | `extensions/jev.ts` | |
 
 ## Deviations, and why each one is safe
@@ -155,6 +155,37 @@ this code's behaviour.
 | `HEADER_CHARS` | 1500 | | `TOOL_RESULT_CHARS` | 800 |
 | `MAX_WORKERS` | 16 | | `DEFAULT_TIMEOUT_MS` | 8000 |
 
+## Layering
+
+`docs/SPEC_PI_EXTENSION.md` §11 requires the framework-agnostic modules to be
+reusable by the standalone track, so the boundary is enforced rather than
+intended. `src/jev` and `src/compaction` contain no reference to
+`@earendil-works/*`, `PI_CODING_AGENT_DIR`, or any pi path; `grep` for those
+outside `src/pi` and `extensions` returns nothing.
+
+Two things make that hold:
+
+- **The engine defines its own input type.** `selectBlocks` works on
+  `{ role, text, needs? }` and never sees an `AgentMessage`, a
+  `CompactionPreparation`, or an `ExtensionContext`. `src/pi/blocks.ts` is the
+  only place pi's message shape is read.
+- **The Jev transport is injected.** `selectBlocks` takes `ask: AskFn`. The
+  adapter supplies one wired to pi's `AbortSignal` and pi's log paths; the tests
+  supply a stub. File locations are arguments (`JevFiles`), not module state, so
+  the client has no default directory to be wrong about.
+
+`src/pi/digest.ts` sits on the pi side deliberately. It renders `Kept[]` into
+the single string pi's `CompactionEntry.summary` holds, and `splitSummary`
+recognises pi's own `## ` section format — both are pi contracts. The engine
+returns `Selection.kept`, which is what a `ContextView`-building runtime would
+consume directly; nothing in `src/compaction` imports the digest, so the
+dependency only ever points toward pi.
+
+The budgets are the part that would not transfer. `TARGET_CHARS`, `PIN_TAIL`,
+and `BLOCK_BUDGET` assume a host that keeps its own recent tail and lets an
+extension fill one summary slot. A per-step `ContextView` would want different
+numbers; see the measurements below.
+
 ## Deliberately not implemented
 
 claude-jev's `docs/compaction-design.md` ranks four items it has designed but
@@ -170,26 +201,59 @@ for read-class tools would cut the unit count roughly in half.
 
 ## Measured on real pi transcripts
 
-`node scripts/replay.ts --limit 25`, 2026-09-25, live Jev via TypeSafe. 14 of
-25 sessions were long enough to compact; the rest were skipped.
+`node scripts/replay.ts --limit 40`, 2026-09-25, live Jev via TypeSafe. 24 of
+40 sessions were long enough to compact; the rest were skipped.
 
 | | |
 | --- | --- |
-| blocks judged | 984 → 270 kept |
-| transcript bytes | 727,477 → 131,338 (82% smaller) |
-| digest size | 4,269–16,986 chars (~1.1k–4.2k tok) |
-| time to compact | 259–1,295 ms |
-| blocks left unscored | 0 of 984 |
-| digest round-trips | 14/14 |
-| tool results linked by id | 462 |
-| of those, missed by text adjacency | 237 (51%) |
-| kept results still without their call | 6 (1.3%, dropped by the digest cap) |
-| rescue window fired | 2 sessions, 3 early constraints kept |
+| blocks judged | 2,298 → 469 kept |
+| transcript bytes | 1,393,417 → 218,515 (84% smaller) |
+| digest size | 4,112–17,322 chars (~1.0k–4.3k tok) |
+| time to compact | 255–1,424 ms |
+| blocks left unscored | 0 of 2,298 |
+| digest round-trips | 24/24 |
+| tool results linked by id | 1,071 |
+| of those, missed by text adjacency | 472 (44%) |
+| kept results still without their call | 12 (1.1%, dropped by the digest cap) |
+| rescue window fired | 6 sessions |
+| `BLOCK_BUDGET` (300) binding | 4 sessions, from 381–595 summarized messages |
 
-Digest sizes sit in the 3.2–3.9k token band claude-jev measures for its own
-digest, and latency in its 0.9–1.1 s band, on the largest sessions. The replay
-approximates pi's cut point by walking `estimateTokens` back to
+### The budget constants
+
+`TARGET_CHARS` and `PIN_TAIL` are inherited from claude-jev, where the digest
+replaced the entire context. In pi the digest only fills the summary slot beside
+a tail pi keeps verbatim, so both had to be re-checked rather than assumed.
+
+| | |
+| --- | --- |
+| sessions where the 16k cap binds | 7 of 24 (29%) |
+| blocks the cap dropped | 246 |
+| blocks the cap downgraded to heads | 32 |
+| digest on cap-bound sessions | median 16,987 chars |
+| pinned share, cap-bound sessions | median 16%, max 21% |
+| pinned share, sessions with slack | median 40% |
+| pinned chars | median 2,227, max 3,327 of 16,000 |
+
+The cap earns its place: it is the binding constraint on roughly a third of real
+sessions, and on those the digest lands at ~4.2k tokens.
+
+`PIN_TAIL` does not compete with it. The headline pinned share — median 29%,
+p90 68%, max 100% — is an artifact of short sessions with 10k chars of unused
+budget. On the sessions where the cap actually binds, the pin costs 16% median
+and 21% worst case, about 550–830 tokens. It buys continuity at the seam
+immediately before pi's own verbatim tail, which is where a model is most likely
+to lose the thread. Keep it, but it is now a measured tradeoff rather than an
+inherited constant.
+
+This corrects claude-jev's `docs/compaction-design.md`, which reports pinned
+shares of median 24% / p90 31% / p99 40% at an 8k cap and predicts "at 16k those
+shares halve." On pi transcripts at a 16k cap the median is 29%, not ~12%. Part
+of the difference is structural: in pi the pinned blocks are the newest four of
+the *summarized* span, adjacent to a tail pi already keeps, rather than the live
+tail of the whole conversation.
+
+The replay approximates pi's cut point by walking `estimateTokens` back to
 `keepRecentTokens`; production gets the real boundary from
-`prepareCompaction`. It measures size, latency, and pairing, not re-fetch
-coverage — that needs the labelled replay in claude-jev's `eval/`, which reports
-76–82% verbatim coverage against Claude Code transcripts.
+`prepareCompaction`. It measures size, latency, pairing, and budget pressure,
+not re-fetch coverage — that needs the labelled replay in claude-jev's `eval/`,
+which reports 76–82% verbatim coverage against Claude Code transcripts.

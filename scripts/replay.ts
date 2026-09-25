@@ -2,10 +2,10 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { buildSessionContext, estimateTokens, parseSessionEntries } from "@earendil-works/pi-coding-agent";
 import type { SessionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { renderDigest, splitSummary } from "../src/compaction/digest.ts";
-import { selectBlocks, type AskFn } from "../src/compaction/select.ts";
+import { renderDigest, splitSummary } from "../src/pi/digest.ts";
+import { selectBlocks, TARGET_CHARS, type AskFn } from "../src/compaction/select.ts";
 import { ask as liveAsk, resolve, type Answers } from "../src/jev/client.ts";
-import { configDir } from "../src/jev/env.ts";
+import { callLogPath, dotEnvPath, sessionsDir } from "../src/pi/paths.ts";
 import { blocksFrom } from "../src/pi/blocks.ts";
 
 type AgentMessage = SessionContext["messages"][number];
@@ -30,7 +30,7 @@ function parseOptions(argv: readonly string[]): Options {
 }
 
 function sessionFiles(): string[] {
-	const root = join(configDir(), "sessions");
+	const root = sessionsDir();
 	const out: string[] = [];
 	for (const dir of readdirSync(root)) {
 		const full = join(root, dir);
@@ -84,6 +84,11 @@ interface Row {
 	ms: number;
 	failedChunks: number;
 	roundTrip: boolean;
+	capBound: boolean;
+	escalated: number;
+	droppedByCap: number;
+	pinnedChars: number;
+	pinShare: number;
 	linked: number;
 	adjacencyMissed: number;
 	orphans: number;
@@ -132,6 +137,8 @@ async function replay(path: string, options: Options, askFn: AskFn): Promise<Row
 		if (keptSet.has(i) && !keptSet.has(block.needs)) orphans++;
 	});
 
+	const pinnedChars = stats.pinnedChars ?? 0;
+	const charsAfter = stats.charsAfter ?? 0;
 	return {
 		session: path.split("/").slice(-2).join("/"),
 		messages: messages.length,
@@ -142,7 +149,7 @@ async function replay(path: string, options: Options, askFn: AskFn): Promise<Row
 		pinned: stats.pinned ?? 0,
 		rescued: stats.rescued ?? 0,
 		charsBefore: stats.charsBefore ?? 0,
-		charsAfter: stats.charsAfter ?? 0,
+		charsAfter,
 		digestChars: digest.length,
 		reduction: stats.reduction ?? 0,
 		ms: stats.ms ?? 0,
@@ -150,6 +157,11 @@ async function replay(path: string, options: Options, askFn: AskFn): Promise<Row
 			(row) => row.verdict !== "pinned" && Object.keys(row.checks).length === 0,
 		).length,
 		roundTrip,
+		capBound: (stats.charsBeforeFit ?? 0) > TARGET_CHARS,
+		escalated: stats.escalated ?? 0,
+		droppedByCap: (stats.keptBeforeFit ?? 0) - (stats.kept ?? 0),
+		pinnedChars,
+		pinShare: charsAfter === 0 ? 0 : pinnedChars / charsAfter,
 		linked,
 		adjacencyMissed,
 		orphans,
@@ -210,13 +222,49 @@ function print(rows: readonly Row[], label: string): void {
 	}
 }
 
+function quantile(values: readonly number[], q: number): number {
+	const sorted = [...values].sort((a, b) => a - b);
+	return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+}
+
+function budget(rows: readonly Row[]): void {
+	const pct = (x: number) => `${Math.round(x * 100)}%`;
+	const shares = rows.map((row) => row.pinShare);
+	const pinned = rows.map((row) => row.pinnedChars);
+	const digests = rows.map((row) => row.digestChars);
+	console.log(`\nbudget — TARGET_CHARS ${TARGET_CHARS}, PIN_TAIL 4:`);
+	console.log(`  cap bound on ${rows.filter((row) => row.capBound).length}/${rows.length} sessions`);
+	console.log(`  blocks the cap downgraded to heads: ${rows.reduce((n, row) => n + row.escalated, 0)}`);
+	console.log(`  blocks the cap dropped: ${rows.reduce((n, row) => n + row.droppedByCap, 0)}`);
+	console.log(
+		`  pinned share of digest: median ${pct(quantile(shares, 0.5))} · p90 ${pct(quantile(shares, 0.9))} · max ${pct(Math.max(...shares))}`,
+	);
+	console.log(`  pinned chars: median ${quantile(pinned, 0.5)} · max ${Math.max(...pinned)} of ${TARGET_CHARS}`);
+	console.log(`  digest chars: median ${quantile(digests, 0.5)} · max ${Math.max(...digests)}`);
+	const bound = rows.filter((row) => row.capBound);
+	if (bound.length > 0) {
+		const boundShares = bound.map((row) => row.pinShare);
+		const boundDigests = bound.map((row) => row.digestChars);
+		console.log(
+			`  on the ${bound.length} cap-bound sessions: pinned share median ${pct(quantile(boundShares, 0.5))} · max ${pct(Math.max(...boundShares))} · digest median ${quantile(boundDigests, 0.5)}`,
+		);
+	}
+	const slack = rows.filter((row) => !row.capBound);
+	if (slack.length > 0) {
+		console.log(
+			`  on the ${slack.length} sessions with slack: pinned share median ${pct(quantile(slack.map((row) => row.pinShare), 0.5))} · digest median ${quantile(slack.map((row) => row.digestChars), 0.5)} of ${TARGET_CHARS}`,
+		);
+	}
+}
+
 async function main(): Promise<number> {
 	const options = parseOptions(process.argv.slice(2));
 	const paths = options.paths.length > 0 ? options.paths : sessionFiles().slice(0, options.limit);
-	const resolved = resolve();
+	const files = { dotEnv: dotEnvPath(), callLog: callLogPath() };
+	const resolved = resolve(files);
 	const live = resolved.source !== "missing";
 	const askFn: AskFn = live
-		? (state, questions, timeoutMs) => liveAsk(state, questions, { timeoutMs, caller: "replay" })
+		? (state, questions, timeoutMs) => liveAsk(state, questions, { ...files, timeoutMs, caller: "replay" })
 		: stubAsk;
 	console.log(
 		`pi-jev replay · ${paths.length} session(s) · keepRecentTokens ${options.keepRecentTokens} · ` +
@@ -260,6 +308,7 @@ async function main(): Promise<number> {
 			`${totals.linked} linked tool results, ${totals.adjacencyMissed} of them missed by text adjacency, ` +
 			`${totals.orphans} left without their call`,
 	);
+	budget(rows);
 
 	if (options.show > 0) {
 		const last = rows[rows.length - 1];

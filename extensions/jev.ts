@@ -1,9 +1,13 @@
 import type { ExtensionAPI, FileOperations } from "@earendil-works/pi-coding-agent";
-import { renderDigest } from "../src/compaction/digest.ts";
+import { renderDigest } from "../src/pi/digest.ts";
 import { DIRECTIVE_CHARS, selectBlocks, type AskFn, type Selection } from "../src/compaction/select.ts";
 import { ask, resolve, status } from "../src/jev/client.ts";
-import { appendRecord, COMPACT_LOG, lastRecord } from "../src/jev/log.ts";
+import { appendRecord, lastRecord } from "../src/jev/log.ts";
 import { blocksFrom } from "../src/pi/blocks.ts";
+import { callLogPath, compactLogPath, dotEnvPath } from "../src/pi/paths.ts";
+
+const FILES = { dotEnv: dotEnvPath(), callLog: callLogPath() };
+const COMPACT_LOG_PATH = compactLogPath();
 
 function directiveOf(instructions: string | undefined): string | undefined {
 	const trimmed = (instructions ?? "").trim().slice(0, DIRECTIVE_CHARS);
@@ -30,7 +34,7 @@ function describeDigest(reason: string, selection: Selection): string {
 
 export default function (pi: ExtensionAPI) {
 	pi.on("session_before_compact", async (event, ctx) => {
-		if (resolve().source === "missing") return;
+		if (resolve(FILES).source === "missing") return;
 		const { preparation, customInstructions, reason, signal } = event;
 		const blocks = blocksFrom(
 			[...preparation.messagesToSummarize, ...preparation.turnPrefixMessages],
@@ -39,7 +43,7 @@ export default function (pi: ExtensionAPI) {
 		if (blocks.length === 0) return;
 
 		const askFn: AskFn = (state, questions, timeoutMs) =>
-			ask(state, questions, { timeoutMs, signal, caller: "compaction" });
+			ask(state, questions, { ...FILES, timeoutMs, signal, caller: "compaction" });
 
 		let selection: Selection;
 		try {
@@ -55,7 +59,7 @@ export default function (pi: ExtensionAPI) {
 
 		const { rows, ...counters } = selection.stats;
 		const summary = renderDigest(blocks, selection.kept);
-		appendRecord(COMPACT_LOG, {
+		appendRecord(COMPACT_LOG_PATH, {
 			ts: new Date().toISOString(),
 			session_id: ctx.sessionManager.getSessionId(),
 			source: "session_before_compact",
@@ -80,14 +84,14 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("jev", {
 		description: "Show the Jev key source, provider, version, and the last compaction",
 		handler: async (_args, ctx) => {
-			const info = status();
+			const info = status(FILES);
 			const call = info.lastCall;
 			const lastCall =
 				call === undefined
 					? "no Jev call logged yet"
 					: `last call ${call.ok ? "ok" : "failed"} in ${call.ms} ms at ${call.ts}` +
 						`${call.ok ? "" : `: ${String(call.error ?? "").slice(0, 160)}`}`;
-			const compacted = lastRecord(COMPACT_LOG);
+			const compacted = lastRecord(COMPACT_LOG_PATH);
 			const lastCompaction =
 				compacted === undefined
 					? "no compaction logged yet"

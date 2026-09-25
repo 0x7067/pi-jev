@@ -1,4 +1,4 @@
-import type { Block, Kept } from "./select.ts";
+import type { Block, Kept } from "../compaction/select.ts";
 
 export const DIGEST_HEADER =
 	"This is not a written summary. Jev selected the blocks below out of the " +

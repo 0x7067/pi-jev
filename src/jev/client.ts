@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { envValue, readEnv, type EnvSource } from "./env.ts";
-import { appendRecord, CALL_LOG, lastRecord } from "./log.ts";
+import { appendRecord, lastRecord } from "./log.ts";
 
 export interface Provider {
 	readonly name: string;
@@ -41,6 +41,13 @@ export type Answers = Record<string, Answer>;
 
 export class JevError extends Error {}
 
+/** Where the caller keeps its dotenv fallback and its call log. Both optional:
+ * with neither, the client reads the process environment and logs nowhere. */
+export interface JevFiles {
+	dotEnv?: string;
+	callLog?: string;
+}
+
 let cachedVersion: string | undefined;
 
 export function version(): string {
@@ -62,8 +69,8 @@ export function providerFor(key: string): Provider {
 	);
 }
 
-export function pinnedProvider(): Provider | undefined {
-	const name = envValue("JEV_PROVIDER");
+export function pinnedProvider(dotEnvPath?: string): Provider | undefined {
+	const name = envValue("JEV_PROVIDER", dotEnvPath);
 	return PROVIDERS.find((p) => p.name === name);
 }
 
@@ -73,8 +80,8 @@ export interface Resolved {
 	provider: Provider | undefined;
 }
 
-export function resolve(): Resolved {
-	const pinned = pinnedProvider();
+export function resolve(files: JevFiles = {}): Resolved {
+	const pinned = pinnedProvider(files.dotEnv);
 	const candidates = pinned ? [pinned] : PROVIDERS;
 	const readers = [
 		(name: string) => {
@@ -82,7 +89,7 @@ export function resolve(): Resolved {
 			return value ? { value, source: "env" as const } : undefined;
 		},
 		(name: string) => {
-			const found = readEnv(name);
+			const found = readEnv(name, files.dotEnv);
 			return found?.source === "dotenv" ? found : undefined;
 		},
 	];
@@ -100,7 +107,7 @@ export function missingKeyMessage(provider: Provider | undefined): string {
 	return `set ${names.join(" or ")}`;
 }
 
-export interface AskOptions {
+export interface AskOptions extends JevFiles {
 	model?: string;
 	timeoutMs?: number;
 	signal?: AbortSignal;
@@ -108,6 +115,7 @@ export interface AskOptions {
 }
 
 function logCall(
+	callLog: string | undefined,
 	provider: Provider,
 	model: string,
 	questions: number,
@@ -115,6 +123,7 @@ function logCall(
 	error: string | undefined,
 	caller: string,
 ): void {
+	if (callLog === undefined) return;
 	const record: Record<string, unknown> = {
 		ts: new Date().toISOString(),
 		caller,
@@ -126,7 +135,7 @@ function logCall(
 		v: version(),
 	};
 	if (error !== undefined) record.error = error.slice(0, 300);
-	appendRecord(CALL_LOG, record);
+	appendRecord(callLog, record);
 }
 
 export async function ask(
@@ -134,13 +143,15 @@ export async function ask(
 	questions: Record<string, Question>,
 	options: AskOptions = {},
 ): Promise<Answers> {
-	const { key, provider, source } = resolve();
+	const { key, provider, source } = resolve(options);
 	if (source === "missing" || provider === undefined) throw new JevError(missingKeyMessage(provider));
-	const model = options.model ?? envValue("JEV_MODEL") ?? DEFAULT_MODEL;
+	const model = options.model ?? envValue("JEV_MODEL", options.dotEnv) ?? DEFAULT_MODEL;
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	const caller = options.caller ?? "compaction";
 	const body = JSON.stringify({ state, model, questions });
 	const count = Object.keys(questions).length;
+	const log = (started: number, error: string | undefined) =>
+		logCall(options.callLog, provider, model, count, started, error, caller);
 
 	for (let attempt = 1; ; attempt++) {
 		const started = performance.now();
@@ -156,17 +167,17 @@ export async function ask(
 			});
 		} catch (error) {
 			const text = error instanceof Error ? error.message : String(error);
-			logCall(provider, model, count, started, text, caller);
+			log(started, text);
 			if (attempt === 1 && !options.signal?.aborted && performance.now() - started < FAST_FAIL_MS) continue;
 			throw new JevError(text);
 		}
 		if (!response.ok) {
 			const detail = (await response.text().catch(() => "")).slice(0, 500);
-			logCall(provider, model, count, started, `HTTP ${response.status}: ${detail}`, caller);
+			log(started, `HTTP ${response.status}: ${detail}`);
 			throw new JevError(`HTTP ${response.status}: ${detail}`);
 		}
 		const payload = (await response.json().catch(() => ({}))) as { answers?: Answers };
-		logCall(provider, model, count, started, undefined, caller);
+		log(started, undefined);
 		return payload.answers ?? {};
 	}
 }
@@ -179,13 +190,13 @@ export interface Status {
 	lastCall: Record<string, unknown> | undefined;
 }
 
-export function status(): Status {
-	const { source, provider } = resolve();
+export function status(files: JevFiles = {}): Status {
+	const { source, provider } = resolve(files);
 	return {
 		version: version(),
 		key: source,
 		provider: provider?.name,
-		pinned: envValue("JEV_PROVIDER") ?? "auto",
-		lastCall: lastRecord(CALL_LOG),
+		pinned: envValue("JEV_PROVIDER", files.dotEnv) ?? "auto",
+		lastCall: files.callLog === undefined ? undefined : lastRecord(files.callLog),
 	};
 }

@@ -1,17 +1,13 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 
-export function configDir(): string {
-	return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
-}
+export type EnvSource = "env" | "dotenv";
 
 const ASSIGNMENT = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/;
 
-function fromDotEnv(name: string): string | undefined {
+function fromFile(path: string, name: string): string | undefined {
 	let text: string;
 	try {
-		text = readFileSync(join(configDir(), ".env"), "utf8");
+		text = readFileSync(path, "utf8");
 	} catch {
 		return undefined;
 	}
@@ -28,15 +24,16 @@ function fromDotEnv(name: string): string | undefined {
 	return undefined;
 }
 
-export type EnvSource = "env" | "dotenv";
-
-export function readEnv(name: string): { value: string; source: EnvSource } | undefined {
+export function readEnv(
+	name: string,
+	dotEnvPath?: string,
+): { value: string; source: EnvSource } | undefined {
 	const direct = process.env[name]?.trim();
 	if (direct) return { value: direct, source: "env" };
-	const saved = fromDotEnv(name);
+	const saved = dotEnvPath === undefined ? undefined : fromFile(dotEnvPath, name);
 	return saved ? { value: saved, source: "dotenv" } : undefined;
 }
 
-export function envValue(name: string): string | undefined {
-	return readEnv(name)?.value;
+export function envValue(name: string, dotEnvPath?: string): string | undefined {
+	return readEnv(name, dotEnvPath)?.value;
 }

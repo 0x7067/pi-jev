@@ -92,39 +92,46 @@ about — partial failure grows the digest, it does not shrink it.
 ## Measured
 
 `node scripts/replay.ts` replays real transcripts from pi's own session store
-through the ported pipeline. Over 14 sessions replayed with live Jev judgments:
+through the ported pipeline. Over 24 sessions replayed with live Jev judgments:
 
 | | |
 | --- | --- |
-| blocks judged | 984 → 270 kept |
-| transcript bytes | 727,477 → 131,338 (82% smaller) |
-| digest size | 4,269–16,986 chars (~1.1k–4.2k tok) |
-| time to compact | 259–1,295 ms |
+| blocks judged | 2,298 → 469 kept |
+| transcript bytes | 1,393,417 → 218,515 (84% smaller) |
+| digest size | 4,112–17,322 chars (~1.0k–4.3k tok) |
+| time to compact | 255–1,424 ms |
 | blocks left unscored | 0 |
-| digest round-trips | 14/14 |
-| tool results paired with their call | 462, of which 237 would have been missed by text adjacency |
+| digest round-trips | 24/24 |
+| tool results paired with their call | 1,071, of which 472 would have been missed by text adjacency |
+| sessions where the 16k cap binds | 7 of 24, dropping 246 blocks |
+| pinned share where the cap binds | median 16%, max 21% |
 
 The replay approximates pi's cut point by walking token estimates back to
 `keepRecentTokens`; production uses pi's own `prepareCompaction`. It does not
 measure re-fetch coverage — claude-jev's `eval/` does, against Claude Code
 transcripts, and reports 76–82% verbatim coverage there.
+`docs/compaction-port.md` has the full budget analysis.
 
 ## Layout
 
 ```
 extensions/jev.ts        pi adapter: event wiring, /jev, nothing else
 src/pi/blocks.ts         pi messages -> judge-visible blocks
+src/pi/digest.ts         kept blocks -> pi's summary string, and back
+src/pi/paths.ts          pi's config dir, .env, logs, session store
 src/compaction/select.ts the selection engine, framework-agnostic
-src/compaction/digest.ts kept blocks -> pi's summary string, and back
 src/jev/client.ts        System One client, key and provider resolution
-src/jev/env.ts           pi's config dir and .env
-src/jev/log.ts           JSONL call and compaction logs
+src/jev/env.ts           process env with an optional dotenv fallback
+src/jev/log.ts           JSONL append and tail read, paths supplied
 scripts/replay.ts        replay real pi transcripts through the pipeline
 ```
 
 Per `docs/SPEC_PI_EXTENSION.md` §11, no selection logic lives in an event
-handler. `src/jev` and `src/compaction` are framework-agnostic and reusable by
-the standalone track; only `src/pi` and `extensions/` know pi exists.
+handler. `src/jev` and `src/compaction` reference nothing pi-specific — not the
+package, not `PI_CODING_AGENT_DIR`, not a log path — so the standalone track can
+reuse them unchanged. File locations are arguments, not defaults.
+`docs/compaction-port.md` records what the port changed, what it left alone, and
+what the budget constants measure on real transcripts.
 
 Logs land in `~/.pi/agent/jev-calls.jsonl` (one line per Jev call) and
 `~/.pi/agent/jev-compact-log.jsonl` (one line per compaction, including the

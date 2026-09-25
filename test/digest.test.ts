@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DIGEST_HEADER, delimiter, renderDigest, splitSummary } from "../src/compaction/digest.ts";
+import { DIGEST_HEADER, delimiter, renderDigest, splitSummary } from "../src/pi/digest.ts";
 import type { Block, Kept } from "../src/compaction/select.ts";
 
 const blocks: Block[] = [

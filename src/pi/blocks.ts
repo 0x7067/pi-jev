@@ -1,5 +1,5 @@
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
-import { splitSummary } from "../compaction/digest.ts";
+import { splitSummary } from "./digest.ts";
 import { BLOCK_BUDGET, judgeable, type Block } from "../compaction/select.ts";
 
 type AgentMessage = Parameters<typeof convertToLlm>[0][number];

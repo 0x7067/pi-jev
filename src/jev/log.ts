@@ -1,28 +1,22 @@
 import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { configDir } from "./env.ts";
+import { dirname } from "node:path";
 
 export const CALL_LOG = "jev-calls.jsonl";
 export const COMPACT_LOG = "jev-compact-log.jsonl";
 
 const TAIL_BYTES = 4096;
 
-export function logPath(file: string): string {
-	return join(configDir(), file);
-}
-
-export function appendRecord(file: string, record: Record<string, unknown>): void {
+export function appendRecord(path: string, record: Record<string, unknown>): void {
 	try {
-		const path = logPath(file);
 		mkdirSync(dirname(path), { recursive: true });
 		appendFileSync(path, `${JSON.stringify(record)}\n`);
 	} catch {}
 }
 
-export function lastRecord(file: string): Record<string, unknown> | undefined {
+export function lastRecord(path: string): Record<string, unknown> | undefined {
 	let fd: number | undefined;
 	try {
-		fd = openSync(logPath(file), "r");
+		fd = openSync(path, "r");
 		const size = fstatSync(fd).size;
 		const start = Math.max(0, size - TAIL_BYTES);
 		const buffer = Buffer.alloc(size - start);
