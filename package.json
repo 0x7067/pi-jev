@@ -1,0 +1,47 @@
+{
+  "name": "pi-jev",
+  "version": "0.1.0",
+  "description": "Jev-powered compaction for pi. TypeSafe's System One model picks which transcript blocks still matter, and those bytes carry over verbatim instead of an LLM-written summary.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "typesafe",
+    "jev",
+    "system-one",
+    "compaction",
+    "context",
+    "token-savings"
+  ],
+  "homepage": "https://github.com/0x7067/pi-jev#readme",
+  "bugs": {
+    "url": "https://github.com/0x7067/pi-jev/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0x7067/pi-jev.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/jev.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "check": "npm run typecheck && npm test",
+    "replay": "node scripts/replay.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
