@@ -23,6 +23,7 @@ export interface Block {
 	role: string;
 	text: string;
 	needs?: number;
+	refs?: string[];
 }
 
 const META_PREFIXES = [

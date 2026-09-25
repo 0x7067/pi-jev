@@ -55,6 +55,7 @@ test("blockFrom writes the tool markers the checks are keyed on", () => {
 	assert.deepEqual(block, {
 		role: "assistant",
 		text: 'reading it now\n[tool_use read] {"path":"src/a.ts"}',
+		refs: ["src/a.ts"],
 	});
 	assert.ok(
 		!block!.text.includes("let me look"),

@@ -186,6 +186,89 @@ and `BLOCK_BUDGET` assume a host that keeps its own recent tail and lets an
 extension fill one summary slot. A per-step `ContextView` would want different
 numbers; see the measurements below.
 
+## Re-fetch coverage on real pi transcripts
+
+`scripts/coverage.ts` ports the metric from claude-jev's `eval/compare.py`. It
+needs no labels: a real compaction boundary splits a session into before and
+after, and any location fetched on both sides is an artifact the session needed
+again. The question is whether the post-compaction context names that location
+well enough to re-fetch it. `verbatim` counts only locations whose route
+survives in a block kept whole, not in a 400-char head.
+
+The default side is free: pi stores its own summary in the `CompactionEntry`, so
+no LLM has to be paid to reproduce it. Both sides get the same retained tail,
+and the "alone" column strips it so the summary and the digest can be compared
+directly.
+
+Over every session in `~/.pi/agent/sessions` that contains a compaction entry —
+69 boundaries with signal, 6,609 re-fetch events, live Jev:
+
+| pointer lines | index chars median | default | jev digest | jev verbatim | floor 70% |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 0 | 90% | 84% | 66% | FAIL |
+| 15 | 611 | 90% | 88% | 77% | PASS |
+| 30 | 1,339 | 90% | 91% | 82% | PASS |
+| 60 | 2,628 | 90% | 95% | 91% | PASS |
+
+Fifteen pointer lines clear the floor for about 150 tokens. Sixty beat pi's own
+default — 91% against 90% — for about 650, which is the first configuration
+where the digest wins the comparison outright rather than trading size for
+coverage.
+
+Without pointers the digest spends 17.0k chars to reach 66% while pi's summary
+spends 10.8k to reach 90%. pi wins because its summary ends with deterministic
+`<read-files>` and `<modified-files>` indexes — the same mechanism claude-jev's
+`compaction-design.md` proposes as its item 2 and ranks as paying soonest. The
+measurement says the proposal is not optional on pi: pi's default already has
+it, so shipping without it is a regression against the thing being replaced.
+
+These numbers are not comparable to claude-jev's 76–82%. The extractor below is
+generic, so bash commands and generated code contribute locations that
+claude-jev's tool-name table never saw; 6,609 events against its 107–274.
+
+### Locating what a tool call touched
+
+The first version of this named tools: a table of `read` / `edit` / `write` /
+`grep`, plus a regex for `fabric_exec`'s generated JavaScript. That does not
+survive contact with a real pi install, which had `agent_browser`,
+`exec_command`, `jev_browse`, `scrape`, `subagent_spawn`, `recall`, `workflow`
+and a dozen more behind it — and `fabric_exec` came from a package that was
+uninstalled between writing the table and running it.
+
+`src/pi/refs.ts` replaces the table with a walk over the argument tree. No tool
+is named anywhere. A string is a location if its key looks like one (`path`,
+`file`, `target`, `dest`, `source`, `dir`, `url`, `uri`, `pattern`, `glob` and
+close variants), or — for free text such as a shell command or generated code —
+if it contains a path- or URL-shaped substring. Nesting and arrays are walked to
+a bounded depth, and the whole scan is capped so one argument cannot dominate
+the index.
+
+That covers a third-party tool the moment it passes a path, without anyone
+having seen it. It also fails honestly: a wrapper that builds paths out of
+variables and template literals exposes nothing to any local rule, and the
+location is simply not found. Reaching those would mean asking Jev, which is the
+TypeSafe-native answer and a per-call cost `compaction-design.md` deliberately
+avoids for pointers.
+
+The residual risk is over-collection rather than under-collection: a path
+mentioned incidentally in a bash command becomes a pointer line. The 60-line
+bound caps the cost at ~650 tokens median, and an extra correct-looking path in
+the index is cheap next to a missing one.
+
+`Block.refs` carries the locations into the engine, lifted from the full
+arguments before they are truncated to 400 chars — a head of `[tool_use edit]
+{"edits":[…]}` loses the `path` field, so it cannot be recovered afterwards.
+Nothing in the shipped extension reads `refs` yet; the pointer index is still
+eval-only pending the decision below.
+
+### Open
+
+Pointer lines are implemented in `scripts/coverage.ts` behind `--pointer-lines`,
+not in `extensions/jev.ts`. Shipping them means appending the index to the
+digest and deciding whether it counts against `TARGET_CHARS` — at 60 lines the
+digest median is 19,178 chars, about 20% over a cap that currently covers block
+text only.
+
 ## Deliberately not implemented
 
 claude-jev's `docs/compaction-design.md` ranks four items it has designed but

@@ -107,11 +107,16 @@ through the ported pipeline. Over 24 sessions replayed with live Jev judgments:
 | pinned share where the cap binds | median 16%, max 21% |
 
 The replay approximates pi's cut point by walking token estimates back to
-`keepRecentTokens`; production uses pi's own `prepareCompaction`. It does not
-measure re-fetch coverage — claude-jev's `eval/` does, against Claude Code
-transcripts, and reports 76–82% verbatim coverage there.
-`docs/compaction-port.md` has the full budget analysis and the `PIN_TAIL = 0`
-experiment.
+`keepRecentTokens`; production uses pi's own `prepareCompaction`.
+
+`node scripts/coverage.ts` runs the stronger test: re-fetch coverage against
+**real** compaction boundaries already in your session store, with pi's own
+stored summaries as the baseline. Over 69 boundaries and 6,609 re-fetch events,
+the digest reaches 66% verbatim coverage against pi's 90% — and 91% with a
+60-line pointer index of dropped file locations, which pi's summary gets for
+free from its `<read-files>` section. That index is implemented in the eval
+behind `--pointer-lines` but not yet shipped in the extension;
+`docs/compaction-port.md` has the sweep and the open decision.
 
 ## Layout
 
@@ -119,12 +124,14 @@ experiment.
 extensions/jev.ts        pi adapter: event wiring, /jev, nothing else
 src/pi/blocks.ts         pi messages -> judge-visible blocks
 src/pi/digest.ts         kept blocks -> pi's summary string, and back
+src/pi/refs.ts           what locations a tool call touched, by argument shape
 src/pi/paths.ts          pi's config dir, .env, logs, session store
 src/compaction/select.ts the selection engine, framework-agnostic
 src/jev/client.ts        System One client, key and provider resolution
 src/jev/env.ts           process env with an optional dotenv fallback
 src/jev/log.ts           JSONL append and tail read, paths supplied
 scripts/replay.ts        replay real pi transcripts through the pipeline
+scripts/coverage.ts      re-fetch coverage against real compaction boundaries
 ```
 
 Per `docs/SPEC_PI_EXTENSION.md` §11, no selection logic lives in an event

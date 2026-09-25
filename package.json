@@ -34,7 +34,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
     "check": "npm run typecheck && npm test",
-    "replay": "node scripts/replay.ts"
+    "replay": "node scripts/replay.ts",
+    "coverage": "node scripts/coverage.ts"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

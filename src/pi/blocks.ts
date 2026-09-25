@@ -1,5 +1,6 @@
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import { splitSummary } from "./digest.ts";
+import { locations } from "./refs.ts";
 import { BLOCK_BUDGET, judgeable, type Block } from "../compaction/select.ts";
 
 type AgentMessage = Parameters<typeof convertToLlm>[0][number];
@@ -7,6 +8,16 @@ export type LlmMessage = ReturnType<typeof convertToLlm>[number];
 
 const TOOL_INPUT_CHARS = 400;
 const TOOL_RESULT_CHARS = 800;
+
+/** Locations a tool call touched, lifted from the full arguments before they are
+ * truncated into the block text. A 400-char head of `[tool_use edit]
+ * {"edits":[…]}` loses the `path` field, which is the one part needed to
+ * re-read the file, so it cannot be recovered downstream. */
+function toolRefs(args: unknown): string[] {
+	const refs: string[] = [];
+	for (const location of locations(args)) if (location.kind === "file") refs.push(location.value);
+	return refs;
+}
 
 const NOT_A_REQUEST: Record<string, string> = {
 	bashExecution: "bash",
@@ -34,14 +45,17 @@ export function blockFrom(message: LlmMessage): Block | undefined {
 	}
 	if (message.role === "assistant") {
 		const parts: string[] = [];
+		const refs: string[] = [];
 		for (const block of message.content) {
 			if (block.type === "text") parts.push(block.text);
 			else if (block.type === "toolCall") {
 				parts.push(`[tool_use ${block.name}] ${JSON.stringify(block.arguments ?? {}).slice(0, TOOL_INPUT_CHARS)}`);
+				refs.push(...toolRefs(block.arguments));
 			}
 		}
 		const text = judgeable("assistant", parts.join("\n").trim());
-		return text === undefined ? undefined : { role: "assistant", text };
+		if (text === undefined) return undefined;
+		return refs.length === 0 ? { role: "assistant", text } : { role: "assistant", text, refs };
 	}
 	if (message.role === "toolResult") {
 		const text = judgeable("tool", `[tool_result] ${contentText(message.content).slice(0, TOOL_RESULT_CHARS)}`.trim());
