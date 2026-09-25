@@ -1,0 +1,23 @@
+docs/compaction-port.md
+  s_6bd45e19d8925c::t_c0be62e82ddccf 255-303
+scripts/replay.ts
+  s_6bd45e19d8925c::t_2a5a48f800b60f 6,17,22,28,65-66,75-82,104,130-134,157-164,190,256,261,286-312,324,365-366
+src/compaction/select.ts
+  s_6bd45e19d8925c::t_a0e82362cdfa2c 309,320,323
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8a7111db3df956ddf862f4191b0480a17f4bdc7",
+  "prompts": {},
+  "sessions": {
+    "s_6bd45e19d8925c": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0d966-55a3-7798-91e5-79e4596d48ee",
+        "model": "glm-5.3"
+      },
+      "human_author": "Pedro Guimarães <21346846+0x7067@users.noreply.github.com>"
+    }
+  }
+}
